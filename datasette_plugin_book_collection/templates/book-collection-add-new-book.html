@@ -1,0 +1,696 @@
+{% extends "default:base.html" %}
+{% block content %}
+
+<script src="//unpkg.com/alpinejs" defer></script>
+
+<!-- from https://github.com/undecaf/barcode-detector-polyfill -->
+<script src="https://cdn.jsdelivr.net/npm/@undecaf/zbar-wasm@0.9.15/dist/index.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@undecaf/barcode-detector-polyfill@0.9.20/dist/index.js"></script>
+
+<script>
+var ds_last_location = "{{ last_location if last_location is defined else '' }}"
+// from https://simonwillison.net/2018/Dec/19/fast-autocomplete-search/ 
+function debounce(func, wait, immediate) {
+  let timeout;
+  return function() {
+    let context = this, args = arguments;
+    let later = () => {
+      timeout = null;
+      if (!immediate) func.apply(context, args);
+    };
+    let callNow = immediate && !timeout;
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+    if (callNow) func.apply(context, args);
+  };
+};
+
+function update_cover_image(book_id, openlibrary_edition_id) {
+  var coverImage = document.getElementById('cover_image');
+  var noCoverMessage = document.getElementById('no_cover_message');
+
+  // if we have a book id let's see if there's a book cover for it
+  // we can try to get one at /-/datasette-book-collection/covers/<BOOK_ID>
+  // if that 404s then we should fall back and try to get the cover from openlibrary
+  var just_openlibrary_id = openlibrary_edition_id.replace('/books/', '');
+
+  // I am clearly doing something very very wrong with needing to set so many onload event handlers
+  // but if I don't then they don't seem to fire, so this is a TODO to figure out what I don't know
+  // about how img src chaanges are handled in the browser
+  if (book_id) {
+      console.log("Found a local book id")
+      fetch('/-/datasette-book-collection/covers/' + book_id)
+      .then(response => {
+          if (response.ok) {
+              console.log("Response was OK")
+              coverImage.onload = function() {
+                console.log("Cover image loaded");
+                if (coverImage.naturalWidth === 1 && coverImage.naturalHeight === 1) {
+                    console.log("But it's a 1x1 pixel image")
+                    coverImage.classList.add('hidden');
+                    noCoverMessage.classList.remove('hidden');
+                } else {
+                    console.log("It's a real image")
+                    coverImage.classList.remove('hidden');
+                    noCoverMessage.classList.add('hidden');
+                }
+              };
+              coverImage.onerror = function(event) {
+                console.log("Cover image error");
+                console.error('Error details:', event);
+                console.log('Failed URL:', coverImage.src);
+                clear_book_cover_image();
+              };
+              //coverImage.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='; // 1x1 pixel transparent GIF
+              coverImage.src = '/-/datasette-book-collection/covers/' + book_id;
+          } else {
+              console.log("Response was not OK")
+              console.log("Trying to get cover from openlibrary")
+              coverImage.onload = function() {
+                console.log("Cover image loaded");
+                if (coverImage.naturalWidth === 1 && coverImage.naturalHeight === 1) {
+                    console.log("But it's a 1x1 pixel image")
+                    coverImage.classList.add('hidden');
+                    noCoverMessage.classList.remove('hidden');
+                } else {
+                    console.log("It's a real image")
+                    coverImage.classList.remove('hidden');
+                    noCoverMessage.classList.add('hidden');
+                }
+              };
+              coverImage.onerror = function(event) {
+                clear_book_cover_image();
+              };
+              coverImage.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='; // 1x1 pixel transparent GIF
+              coverImage.src = `https://covers.openlibrary.org/b/olid/${just_openlibrary_id}-M.jpg`;
+          }
+      })
+      .catch(error => {
+          console.error('Error:', error);
+          clear_book_cover_image();
+      });
+  } else {
+      coverImage.src = `https://covers.openlibrary.org/b/olid/${just_openlibrary_id}-M.jpg`;
+      coverImage.onload = function() {
+        console.log("Cover image loaded");
+        if (coverImage.naturalWidth === 1 && coverImage.naturalHeight === 1) {
+            console.log("But it's a 1x1 pixel image")
+            coverImage.classList.add('hidden');
+            noCoverMessage.classList.remove('hidden');
+        } else {
+            console.log("It's a real image")
+            coverImage.classList.remove('hidden');
+            noCoverMessage.classList.add('hidden');
+        }
+      };
+      coverImage.onerror = function(event) {
+        console.log("Cover image error");
+        console.error('Error details:', event);
+        console.log('Failed URL:', coverImage.src);
+        clear_book_cover_image();
+      };
+  }
+}
+
+function clear_book_cover_image() {
+  var coverImage = document.getElementById('cover_image');
+  var noCoverMessage = document.getElementById('no_cover_message');
+  if (coverImage) {
+      coverImage.onload = null; // Cancel the callback that looked at the image size
+      coverImage.onerror = null;
+      coverImage.src = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='; // 1x1 pixel transparent GIF
+      coverImage.src = '';
+      coverImage.alt = 'No cover image available';
+      coverImage.classList.add('hidden');
+      noCoverMessage.classList.add('hidden');
+  }
+}
+
+
+function showToast(message, level) {
+  // Create the toast message element
+  var toast = document.createElement('div');
+  toast.classList.add('toast');
+  toast.textContent = message;
+
+  // Apply level-specific styles
+  if (level === 'ERROR') {
+      toast.classList.add('toast-error');
+  } else if (level === 'INFO') {
+      toast.classList.add('toast-info');
+  }
+
+  // Append the toast to the body or a specific container
+  document.body.appendChild(toast);
+
+  // Show the toast
+  toast.style.visibility = 'visible';
+  toast.style.opacity = '1';
+
+  // Hide the toast after 4 seconds
+  setTimeout(function() {
+      toast.style.opacity = '0';
+      toast.style.visibility = 'hidden';
+      // Remove the toast after fading out to avoid cluttering the DOM
+      document.body.removeChild(toast);
+  }, 4000);
+}
+
+let authors = {{ authors | tojson }};
+// lets add a localAuthorId to each author in the authors list
+authors.forEach((author, index) => {
+  author.localAuthorId = index;
+});
+
+
+document.addEventListener('alpine:init', () => {
+  Alpine.store('datalistStore', {
+      allAuthors: authors,
+      bookAuthors: [],
+      last_location: ds_last_location,
+      addAuthor(author) {
+        // validate that the author we're adding has a bookAuthorListId and if not add one
+        if (!author.book_list_author_id) {
+          // rather than the length of the bookAuthors array, find the highest book_list_author_id and add 1
+          author.book_list_author_id = Math.max(...this.bookAuthors.map(author => author.book_list_author_id), 0) + 1;
+        }
+        this.bookAuthors.push(author);
+      },
+      deleteAuthor(book_list_author_id) {
+        this.bookAuthors = this.bookAuthors.filter(author => author.book_list_author_id !== book_list_author_id);
+      },
+  });
+});
+
+function handleAuthorChangeInput(e, index){
+        
+  // dig through the datalist options to find a match for the input value
+  var option = document.querySelector('#authors option[value="' + e.target.value + '"]');
+  if (option) {
+      // we stuck the author id as a data attribute in the main list, so if we find a mmatching name save it
+      document.getElementById('author-id-' + index).value = option.getAttribute('data-author-id');
+      document.getElementById('author-openlibrary-id-' + index).value = option.getAttribute('data-author-openlibrary-id');
+  } else {
+      document.getElementById('author-id-' + index).value = ''; // Clear author_id if no match
+      document.getElementById('author-openlibrary-id-' + index).value = ''; // Clear author_openlibrary_id if no match
+  }
+}
+
+function clearNewBookForm() {
+  // Clear the text in title and isbn
+  document.getElementById('title').value = '';
+  document.getElementById('isbn').value = '';
+  document.getElementById('openlibrary_work_id').value = '';
+  document.getElementById('openlibrary_edition_id').value = '';
+  document.getElementById('search_isbn').value = '';
+  clear_book_cover_image();
+
+  // Hide the bookExistsMessage
+  document.getElementById('bookExistsMessage').style.display = 'none';
+
+  // let's set the bookAuthors array in the store back to empty
+  Alpine.store('datalistStore').bookAuthors = [];
+}
+
+function clearFormButtonHandler() {
+  clearNewBookForm();
+  document.getElementById('location').value = '';
+}
+
+function processIsbnLookupResponse(data, statusCode) {
+      
+  if (statusCode === 404) {
+      console.log('Book not found');
+      showToast('Book not found - 404', 'INFO');
+      return;
+  }
+  if (statusCode === 503 || statusCode === 500) {
+    console.log('Error 500 from isbn lookup');
+    showToast('Some sort of error - perhaps openlibrary is down?', 'ERROR');
+    return;
+  }
+
+  processBookDataObject(data);
+}
+
+
+function processBookDataObject(data) {
+  if (data && data.book) {
+    clearNewBookForm();
+    // Assuming 'manual_form' is the ID of your form
+    var form = document.getElementById('manual_form');
+
+    // Update the title field
+    var titleField = form.querySelector('input[name="title"]');
+    if (titleField) {
+        titleField.value = data.book.title;
+    }
+
+    var book_id = null;
+    if (data.book.book_id) {
+      book_id = data.book.book_id;
+    }
+
+    // Update the ISBN field - choose isbn13 or isbn10 based on what's available
+    var isbnField = form.querySelector('input[name="isbn"]');
+    if (isbnField) {
+        isbnField.value = data.book.isbn13 || data.book.isbn10;
+    }
+
+    var openlibraryWorkIdField = form.querySelector('input[name="openlibrary_work_id"]');
+    if (openlibraryWorkIdField) {
+        openlibraryWorkIdField.value = data.book.openlibrary_work_id;
+    }
+
+
+    var openlibraryEditionIdField = form.querySelector('input[name="openlibrary_edition_id"]');
+    if (openlibraryEditionIdField) {
+        openlibraryEditionIdField.value = data.book.openlibrary_edition_id;
+        update_cover_image(book_id, data.book.openlibrary_edition_id);
+    }
+
+    if (data && data.authors) {
+      // Count how many authors have an 'author_id'
+      //const authorsWithId = data.authors.filter(author => author.author_id).length;
+
+      // the authors array in the response is a set of objects that look like this:
+      // {"author_id": null, "openlibrary_id": {"id": "OL8373617A"}, "name": "Ilan Filonenko", "bio": null} 
+
+      data.authors.forEach((author, index) => {
+        let newAuthorId, newOpenLibraryId;
+        if (author.author_id) {
+          newAuthorId = author.author_id;
+        } else {
+          newAuthorId = null;
+        }
+        if (author.openlibrary_id && author.openlibrary_id.id) {
+          newOpenLibraryId = author.openlibrary_id.id;
+        } else {
+          newOpenLibraryId = '';
+        }
+        Alpine.store('datalistStore').addAuthor({name: author.name, author_id: newAuthorId, openlibrary_id: newOpenLibraryId});
+      });
+    }
+    
+
+    if (data.copies && data.copies.length > 0) {
+      var locationField = form.querySelector('input[name="location"]');
+      if (locationField) {
+          //locationField.value = data.copies.slice(-1)[0].location;
+          Alpine.store('datalistStore').last_location = data.copies.slice(-1)[0].location;
+      }
+      document.getElementById('bookExistsMessage').style.display = 'block';
+    } else {
+      document.getElementById('bookExistsMessage').style.display = 'none';
+    }
+  // end of if data && data.book
+  } else {
+    showToast('Not able to locate that book', 'INFO');
+  }
+}
+
+function setupIsbnSearch() {
+  document.getElementById('search_isbn_button').addEventListener('click', function() {
+    document.getElementById('bookExistsMessage').style.display = 'none';
+    var isbn = document.getElementById('search_isbn').value.trim();
+
+    // Validate ISBN length
+    if (isbn.length === 10 || isbn.length === 13) {
+        // Prepare form data
+        var encodedData = 'isbn=' + encodeURIComponent(isbn);
+
+        // Make a POST request
+        fetch('/-/datasette-book-collection/book-lookup', {
+            method: 'POST',
+            body: encodedData,
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Accept': 'application/json',
+            },
+        })
+        .then(response => {
+          const statusCode = response.status; // Capture the status code
+          return response.json().then(data => ({
+            statusCode,
+            data
+          }));
+        })
+        .then(({ statusCode, data }) => processIsbnLookupResponse(data, statusCode)) // Pass both data and statusCode
+        .catch(error => console.error('Error:', error));
+    } else {
+        alert('ISBN must be 10 or 13 characters long.');
+    }
+  });
+}
+
+function setupTitleAutocomplete() {
+  const titleInput = document.getElementById('title');
+  const titlesDatalist = document.createElement('datalist');
+  titlesDatalist.id = 'titles';
+  document.body.appendChild(titlesDatalist);
+  titleInput.setAttribute('list', 'titles');
+
+  titleInput.addEventListener('input', debounce(function() {
+    const title = titleInput.value;
+    fetch('/-/datasette-book-collection/book-title-search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+      },
+      body: 'title=' + encodeURIComponent(title),
+    })
+    .then(response => response.json())
+    .then(data => {
+      titlesDatalist.innerHTML = ''; // Clear existing options
+      data.forEach(book => {
+        const option = document.createElement('option');
+        option.value = book.title;
+        option.setAttribute('data-book-id', book.book_id);
+        titlesDatalist.appendChild(option);
+      });
+    })
+    .catch(error => console.error('Error:', error));
+  }, 300)); // Adjust debounce timeout as needed
+
+  titleInput.addEventListener('change', function() {
+    const selectedOption = Array.from(titlesDatalist.options).find(option => option.value === titleInput.value);
+    if (selectedOption) {
+      var encodedData = 'book_id=' + encodeURIComponent(selectedOption.getAttribute('data-book-id'));
+
+        // Make a POST request
+        fetch('/-/datasette-book-collection/book-lookup', {
+            method: 'POST',
+            body: encodedData,
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Accept': 'application/json',
+            },
+        })
+        .then(response => {
+          const statusCode = response.status; // Capture the status code
+          return response.json().then(data => ({
+            statusCode,
+            data
+          }));
+        })
+        .then(({ statusCode, data }) => processIsbnLookupResponse(data, statusCode)) // Pass both data and statusCode
+        .catch(error => console.error('Error:', error));
+      
+    }
+  });
+}
+
+function setupUserCoverImageUploadHandler() {
+  var userCoverImagePreview = document.getElementById('user_cover_image_preview');
+  var userCoverImageContainer = document.getElementById('user_cover_image_container');
+  var coverImageUpload = document.getElementById('cover_image_upload');
+
+  coverImageUpload.addEventListener('change', function() {
+    var file = coverImageUpload.files[0];
+    var reader = new FileReader();
+
+    reader.onload = function(e) {
+      userCoverImagePreview.src = e.target.result;
+      userCoverImagePreview.classList.remove('hidden');
+      userCoverImageContainer.classList.remove('hidden');
+    };
+
+    reader.readAsDataURL(file);
+  });
+}
+
+
+// author modal search stuff
+
+function handleAuthorSearchButtonClick() {
+  var query = document.getElementById('searchQuery').value;
+  var url = `https://openlibrary.org/search/authors.json?q=${encodeURIComponent(query)}`;
+
+  fetch(url)
+  .then(response => response.json())
+  .then(data => {
+    var resultsContainer = document.getElementById('searchResults');
+    resultsContainer.innerHTML = ''; // Clear previous results
+
+    if (data.docs.length === 0) {
+      resultsContainer.innerHTML = '<p>No results found.</p>';
+    } else {
+      data.docs.forEach(author => {
+        var authorInfo = document.createElement('div');
+        authorInfo.className = 'author-box';
+        authorInfo.innerHTML = `
+          <div class="author-details">
+          <p>Name: ${author.name || 'N/A'}, Key: ${author.key}, Top Work: ${author.top_work || 'N/A'}, Subjects: ${author.top_subjects ? author.top_subjects.join(', ') : 'N/A'}</p>
+          <button type="button" onclick="selectAuthor('${author.name}', '${author.key}')">Select</button>
+          </div>
+        `;
+        resultsContainer.appendChild(authorInfo);
+      });
+    }
+  });
+}
+
+function clearAuthorSearchResults() {
+  // Clear input fields
+  document.getElementById('searchQuery').value = '';
+  document.getElementById('authorName').value = '';
+  document.getElementById('openLibraryId').value = '';
+
+  // Clear search results
+  document.getElementById('searchResults').innerHTML = '';
+}
+
+function setupAuthorModalSearch() {
+  document.getElementById('searchButton').addEventListener('click', handleAuthorSearchButtonClick);
+  document.getElementById('clearButton').addEventListener('click', clearAuthorSearchResults);
+}
+
+function selectAuthor(name, key) {
+    document.getElementById('authorName').value = name;
+    document.getElementById('openLibraryId').value = key;           
+}
+
+
+  // Function to open the modal
+function openAuthorModal() {
+    document.getElementById('createAuthorModal').classList.add('show');
+}
+
+// Function to close the modal
+function closeAuthorModal() {
+    clearAuthorSearchResults();
+    document.getElementById('createAuthorModal').classList.remove('show');
+    document.getElementById('searchButton').removeEventListener('click', handleAuthorSearchButtonClick);
+    document.getElementById('clearButton').removeEventListener('click', clearAuthorSearchResults);
+}
+
+function setupBarcodeDetction() {
+document.getElementById('scan_isbn_button').addEventListener('click', function() {
+  const modal = document.getElementById('barcode_modal');
+  const video = document.getElementById('barcode_video');
+  const result = document.getElementById('barcode_result');
+  const useButton = document.getElementById('use_barcode_button');
+  const closeButton = document.querySelector('.barcode-detect-close');
+  result.textContent = '';
+
+  modal.style.display = 'block';
+
+  const constraints = {
+    video: {
+      facingMode: 'environment'
+    }
+  };
+
+  navigator.mediaDevices.getUserMedia(constraints).then(function(stream) {
+    video.srcObject = stream;
+    video.setAttribute('playsinline', true);
+    video.play();
+
+
+    const barcodeDetector = new BarcodeDetector({ formats: ['upc_a', 'upc_e'] });
+
+    const detectBarcode = () => {
+      barcodeDetector.detect(video).then(barcodes => {
+        if (barcodes.length > 0) {
+          const barcode = barcodes[0].rawValue;
+          if (barcode.length === 10 || barcode.length === 13) {
+            result.textContent = `Detected ISBN: ${barcode}`;
+            useButton.dataset.barcode = barcode;
+          }
+        }
+        requestAnimationFrame(detectBarcode);
+      }).catch(err => {
+        console.error(err);
+        requestAnimationFrame(detectBarcode);
+      });
+    };
+
+    detectBarcode();
+  }).catch(function(err) {
+    console.error(err);
+  });
+
+  closeButton.addEventListener('click', function() {
+    modal.style.display = 'none';
+    if (video.srcObject) {
+      video.srcObject.getTracks().forEach(track => track.stop());
+    }
+  });
+
+  useButton.addEventListener('click', function() {
+    const isbnInput = document.getElementById('search_isbn');
+    isbnInput.value = useButton.dataset.barcode;
+    //useButton.dataset.barcode = '';
+    modal.style.display = 'none';
+    if (video.srcObject) {
+      video.srcObject.getTracks().forEach(track => track.stop());
+    }
+  });
+});
+}
+   
+
+document.addEventListener('DOMContentLoaded', function() {
+  //setupAuthorsData(1);
+  //setupAnotherAuthorButton();
+  setupIsbnSearch();
+  setupTitleAutocomplete();
+  setupUserCoverImageUploadHandler()
+
+  try {
+    window['BarcodeDetector'].getSupportedFormats()
+  } catch {
+    window['BarcodeDetector'] = barcodeDetectorPolyfill.BarcodeDetectorPolyfill
+  }
+
+  setupBarcodeDetction();
+
+  
+  document.getElementById('closeModalButton').addEventListener('click', function() {
+      closeAuthorModal();
+  });
+      // Add event listener to the create_new_author_button
+  document.getElementById('create_new_author_button').addEventListener('click', function() {
+      openAuthorModal(); // Call the function to display the modal
+      setupAuthorModalSearch();
+  });
+  document.getElementById('save_new_author_button').addEventListener('click', function() {
+    let authorName = document.getElementById('authorName').value;
+    let openLibraryId = document.getElementById('openLibraryId').value;
+    if (document.getElementById('authorName').value !== '') {
+      Alpine.store('datalistStore').addAuthor({name: authorName, author_id: null, openlibrary_id: openLibraryId});
+    }
+    closeAuthorModal();
+  });
+});
+
+</script>
+
+  <h1>Add a new book</h1>
+  
+  <h3>Lookup by ISBN</h3>
+  <div class="isbn-entry">
+    <label class='bookplugin' for="search_isbn">ISBN:</label>
+    <input class='bookplugin' type="text" id="search_isbn" value='{{ isbn if isbn is defined else '' }}' required>
+    <button type="button" id="scan_isbn_button">Scan ISBN Barcode</button>
+</div>
+
+<button type="button" id="search_isbn_button">Search by ISBN</button>
+  <div id="cover_image_container" class="cover-image-container">
+    <img id="cover_image" src="" alt="Book cover image" class="hidden">
+    <div id="no_cover_message" class="no-cover-message hidden">No cover image available</div>
+  </div>
+
+  <h3>Add a book</h3>
+  <div id="bookExistsMessage" style="display: none;">You already have this book in your library</div>
+    <form id="manual_form" action="{{ request.url }}" method="post" enctype="multipart/form-data">
+      <datalist id="authors">
+        {% for author_info in authors %}
+            <option data-author-id="{{ author_info.author_id }}" {% if author_info.openlibrary_id %} data-author-openlibrary-id="{{ author_info.openlibrary_id }}" {% else %} data-author-openlibrary-id='' {%endif %} value="{{ author_info.name }}"></option>
+        {% endfor %}
+        </datalist>
+        <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
+        <label for="title">Title</label>
+        <input type="text" name="title" id="title" value='{{ title if title is defined else '' }}' required><br />
+
+        <div x-data="{ store: $store.datalistStore }">
+          <template x-for="(author, index) in store.bookAuthors" x-bind:key="author.book_list_author_id">
+              <div>
+                  <label :for="'author-name-' + index" :id="'author-name-label-' + index">Author</label>
+                  <input list="authors" :name="'author-name-' + index" :id="'author-name-' + index" x-model="author.name" @input="handleAuthorChangeInput($event, index)">
+                  <label :for="'author-openlibrary-id-' + index" :id="'author-openlibrary-id-label-' + index">OpenLibrary ID</label>
+                  <input :name="'author-openlibrary-id-' + index" :id="'author-openlibrary-id-' + index" x-model="author.openlibrary_id">
+                  <input :name="'author-id-' + index" :id="'author-id-' + index" x-model="author.author_id">
+                  <button type="button" @click="store.deleteAuthor(author.book_list_author_id)">Delete</button>
+              </div>
+          </template>
+        </div>
+
+        <!-- Button wrapper with Flexbox CSS for layout -->
+        <div x-data="{ store: $store.datalistStore }" style="display: flex; justify-content: flex-start; margin-top: 10px;">
+          <button type="button" id="add_author_button"  style="margin-right: 10px;" @click="store.addAuthor({name: '',author_id: null, openlibrary_id: ''})">Add Another Author</button>
+          <button type="button" id="create_new_author_button">Lookup Author from OpenLibrary</button>
+        </div>
+        <br />
+
+
+        <label for="isbn">ISBN</label>
+        <input type="text" name="isbn" id="isbn" value='{{ isbn if isbn is defined else '' }}'><br />
+        <label for="openlibrary_work_id">OpenLibrary Work ID</label>
+        <input type="text" name="openlibrary_work_id" id="openlibrary_work_id" value='{{ openlibrary_work_id if openlibrary_work_id is defined else '' }}'><br />
+        <label for="openlibrary_edition_id">OpenLibrary Edition ID</label>
+        <input type="text" name="openlibrary_edition_id" id="openlibrary_edition_id" value='{{ openlibrary_edition_id if openlibrary_edition_id is defined else '' }}'><br />
+        <label for="location">Location</label>
+        <div x-data="{ store: $store.datalistStore }">
+        <input type="text" x-model="store.last_location" name="location" id="location"><br />
+        </div>
+        <label for="cover_image_upload">Take or upload a cover photo</label>
+        <input type="file" name="cover_image_upload" id="cover_image_upload" accept="image/*"><br />
+        <div id="user_cover_image_container" class="cover-image-container hidden">
+          <img id="user_cover_image_preview" src="" alt="User Uploaded Cover Image Preview" class="hidden"><br />
+        </div>
+        
+        <label for="add_new_copy">Add new copy</label>
+        <input type="checkbox" name="add_new_copy" id="add_new_copy" value="true"><br />
+        <input type="hidden" name="formtype" id="formtype" value="manual">
+        <button type="submit">Add book</button>
+      </form>
+        <div x-data="{ store: $store.datalistStore }">
+        <button type="button" id="clear_form_button" @click="clearFormButtonHandler()">Clear Form</button>
+        </div>
+        <link href="{{ urls.static_plugins("datasette_plugin_book_collection", "book_collection.css") }}" rel="stylesheet" />
+
+
+        <!-- Modal Structure -->
+        <div id="createAuthorModal" class="modal">
+            <div class="modal-content">
+              <!-- Close button -->
+              <span class="close" id="closeModalButton">&times;</span>
+              <h4>Create New Author</h4>
+              <label for="authorName">Name</label>
+              <input type="text" id="authorName"><br>
+              <label for="openLibraryId">OpenLibrary ID</label>
+              <input type="text" id="openLibraryId">
+              <button type="button" id="save_new_author_button">Add to author list</button>
+              <hr>
+              <h4>Search in OpenLibrary</h4>
+              <input type="text" id="searchQuery">
+              <button type="button" id="searchButton">Search</button> <button type="button" id="clearButton">Clear</button>
+              <div id="searchResults"></div>
+            </div>
+        </div>
+
+        <!-- modal for barcode scan -->
+
+        <div id="barcode_modal" class="barcode-detect-modal hidden">
+          <div class="barcode-detect-modal-content">
+            <span class="barcode-detect-close">&times;</span>
+            <video id="barcode_video" class="barcode-detect-video"></video>
+            <div id="barcode_result" class="barcode-detect-result"></div>
+            <button id="use_barcode_button" class="barcode-detect-button">Use this barcode</button>
+          </div>
+        </div>
+
+{% endblock %}
+

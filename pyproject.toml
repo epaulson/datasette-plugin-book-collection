@@ -1,0 +1,36 @@
+[project]
+name = "datasette-plugin-book-collection"
+version = "0.1"
+description = "A datasette plugin to make it easy to create a SQLite database of a book collection, with some UI helpers to scan barcodes and import data from OpenLibrary"
+readme = "README.md"
+authors = [{name = "Erik Paulson"}]
+license = {text = "Apache-2.0"}
+classifiers=[
+    "Framework :: Datasette",
+    "License :: OSI Approved :: Apache Software License"
+]
+requires-python = ">=3.8"
+dependencies = [
+    "datasette",
+    "sqlite-utils",
+    "pydantic",
+    "starlette"
+]
+
+[project.urls]
+Homepage = "https://github.com/epaulson/datasette-plugin-book-collection"
+Changelog = "https://github.com/epaulson/datasette-plugin-book-collection/releases"
+Issues = "https://github.com/epaulson/datasette-plugin-book-collection/issues"
+CI = "https://github.com/epaulson/datasette-plugin-book-collection/actions"
+
+[project.entry-points.datasette]
+plugin_book_collection = "datasette_plugin_book_collection"
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-asyncio", "pytest-httpx"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+
+[tool.setuptools.package-data]
+datasette_plugin_book_collection = ["static/*", "templates/*"]
