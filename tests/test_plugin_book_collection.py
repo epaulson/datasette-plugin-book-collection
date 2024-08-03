@@ -205,7 +205,7 @@ async def test_regular_book_insert(datasette, httpx_mock):
     print(response.status_code)
     assert response.status_code == 200
 
-
+# IMPORTANT - this test can't expects there to be 2 books so don't insert any books in earlier tests
 @pytest.mark.asyncio
 async def test_fetch_books(datasette):
     response = await datasette.client.get("/test/library.json")
@@ -219,6 +219,30 @@ async def test_fetch_books(datasette):
     assert 'Understanding ECMAScript 6: The Definitive Guide for JavaScript Developers' in books
     assert 'Artificial Intelligence' in books
 
+@pytest.mark.asyncio
+async def test_insert_empty_author(datasette, httpx_mock):
+   
+    cookies = {"ds_actor": datasette.sign({"a": {"id": "root"}}, "actor")}
+    response = await datasette.client.get("/-/datasette-book-collection/add-new-book", cookies=cookies)
+    assert response.status_code == 200
+    csrftoken = response.cookies["ds_csrftoken"]
+    cookies["ds_csrftoken"] = csrftoken
+    response = await datasette.client.post(
+        "/-/datasette-book-collection/add-new-book",
+        data={
+            "title": "Empty Authors Book",
+            "author-name-1": "",
+            "author-openlibrary-id-1": "",
+            "author-id-1": "",
+            "csrftoken": csrftoken,
+            "formtype": "manual",
+            "add_new_copy": "false"
+        },
+        cookies=cookies,
+    )
+    print(response)
+    print(response.status_code)
+    assert response.status_code == 200
 
 @pytest.mark.asyncio
 async def test_lookup_via_isbn(datasette):

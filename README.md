@@ -63,7 +63,6 @@ To add a book, visit your datasette instance at `https://<YOUR.DATASETTE:PORT>/-
 To add a book, you must have the ['insert-row' permission](https://docs.datasette.io/en/stable/authentication.html) for that database.
 
 ## Known bugs and future plans
-* Submitting a blank author slot on the form causes the submission to fail. 
 * Internally, processing the web form has been split up into several database statements and are not yet all packaged back up into a single database transaction, so there can be weird artifacts like authors without books or multiple copies of a book. 
 * There is no indicator when web requests to OpenLibrary are in-progress. I'll add a spinner to give more indication that the computer is 'thinking'
 * There is a SQL view created for the entire library that's accessible via the usual SQLite UI, but Datasette makes it really easy to create custom pages so I will make a nice "shelf" view with all of the cover images. 

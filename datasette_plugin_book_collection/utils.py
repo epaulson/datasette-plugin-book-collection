@@ -23,6 +23,8 @@ class BookAlreadyExistsError(Exception):
 def extract_authors(post_data: Dict[str, Any]) -> List[Author]:
     authors = {}
     for key, value in post_data.items():
+        if value is None or value == '':
+            continue
         if key.startswith('author-name-'):
             index = int(key.split('-')[-1])
             if index not in authors:
